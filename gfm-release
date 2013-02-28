@@ -1,0 +1,420 @@
+#!/bin/bash
+# Ensure this script fails on error.
+set -e
+
+# Check for prerequisites
+command -v git >/dev/null 2>&1 || { echo "error: git is not installed. Aborting." >&2; exit 1; }
+command -v mvn >/dev/null 2>&1 || { echo "error: Apache Maven is not installed. Aborting." >&2; exit 1; }
+
+usage() {
+  echo "usage: gfm-release [-hdimor] [-g=origin] <phase>"
+       echo ""
+       echo "Options"
+       echo "   -h        Display this help message"
+       echo "   -d        Dry run only"
+       echo "   -i        Interactive selection of Maven versions"
+       echo "   -m        Interactive commit messages on new git commits and tags"
+       echo "   -o        Offline git. Do not pull or push from origin git repository."
+       echo "   -r        Offline Maven. Do not deploy to Maven repository."
+       echo "   -g=origin Remote git repository to push to (defaults to origin)"
+       echo ""
+       echo "Phases:"
+       echo "   all       Perform all of the steps for a release: prepare, start, commit, apply, finish, push, deploy, clean"
+       echo "   prepare   Perform a Maven release:prepare. This builds the project and executes unit tests."
+       echo "   start     If release branch does not exist, this phase starts the git-flow release. This phase depends "
+       echo "               on the prepare phase completing successfully."
+       echo "   apply     Commits the "tag" version pom.xml to the release branch still exists"
+       echo "   finish    Finishes the git-flow release if the release branch still exists. This creates an appropriate"
+       echo "               tag, merges the release branch to the develop and master branches, and finally deletes the"
+       echo "               release branch. It also and commits the "next" version pom.xml to the develop branch to"
+       echo "               prepare for the next step in iterative development. This phase depends on the apply phase"
+       echo "               completing successfully."
+       echo "   push      Pushes the release tag and the master and develop branches back to origin. This phase"
+       echo "               depends on the finish phase completing successfully."
+       echo "   deploy    Checks out the release tag and then performs a Maven source:jar javadoc:jar and deploy."
+       echo "               After deploying completes, checks out the develop branch. This phase depends on the"
+       echo "               push phase completing successfully."
+       echo "   clean     Cleans up the files that the Maven release:prepare created."
+}
+
+declareTagVersionVars() {
+    if [ -f release.properties ]
+    then
+        # Parse the properties file to obtain the Maven snapshot version number that will be used for
+        # development after this release successfully completes and the name of the SCM release tag that
+        # will ultimately be used for this release.
+        FLOW_PROJECT_DEV=$(cat release.properties | grep project.dev | cut -d= -f2)
+        FLOW_SCM_TAG=$(cat release.properties | grep scm.tag | cut -d= -f2)
+    else
+        echo "error: expected Maven release.properties does not exist. Run mvn release:prepare -DdryRun=true" >&2
+        echo "from starting SNAPSHOT commit on branch '$FLOW_GITFLOW_DEVELOP_BRANCH'" >&2
+        exit 1
+    fi
+}
+
+FLOW_DRYRUN=false
+FLOW_INTERACTIVE_VERSION=false
+FLOW_INTERACTIVE_COMMIT=false
+FLOW_OFFLINE_GIT=false
+FLOW_OFFLINE_MVN=false
+FLOW_STAGE_PREPARE=false
+FLOW_STAGE_START=false
+FLOW_STAGE_APPLY=false
+FLOW_STAGE_FINISH=false
+FLOW_STAGE_PUSH=false
+FLOW_STAGE_DEPLOY=false
+FLOW_STAGE_CLEAN=false
+FLOW_ORIGIN_REMOTE=origin
+FLOW_GITFLOW_MASTER_BRANCH=`git config --get gitflow.branch.master`
+FLOW_GITFLOW_DEVELOP_BRANCH=`git config --get gitflow.branch.develop`
+FLOW_GITFLOW_PREFIX_RELEASE=`git config --get gitflow.prefix.release`
+
+# Process options
+while getopts dhimorg: opt; do
+    case $opt in
+        d)
+            FLOW_DRYRUN=true
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        i)
+            FLOW_INTERACTIVE_VERSION=true
+            ;;
+        m)
+            FLOW_INTERACTIVE_COMMIT=true
+            ;;
+        o)
+            FLOW_OFFLINE_GIT=true
+            ;;
+        r)
+            FLOW_OFFLINE_MVN=true
+            ;;
+        g)
+            FLOW_ORIGIN_REMOTE=$OPTARG
+            ;;
+        \?)
+            echo "Invalid option: $OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+FLOW_STAGE=$1
+
+
+# If there is no stage argument, print help and exit
+if [ ! -n "$FLOW_STAGE" ]
+then
+  echo "error: no stage specified"
+  echo
+  usage
+  exit 1
+fi
+
+# Process stage argument
+case $1 in
+    all)
+        FLOW_STAGE_PREPARE=true
+        FLOW_STAGE_START=true
+        FLOW_STAGE_APPLY=true
+        FLOW_STAGE_FINISH=true
+        FLOW_STAGE_PUSH=true
+        FLOW_STAGE_DEPLOY=true
+        FLOW_STAGE_CLEAN=true
+        ;;
+    prepare)
+        FLOW_STAGE_PREPARE=true
+        ;;
+    start)
+        FLOW_STAGE_START=true
+        ;;
+    start)
+        FLOW_STAGE_APPLY=true
+        ;;
+    finish)
+        FLOW_STAGE_FINISH=true
+        ;;
+    push)
+        FLOW_STAGE_PUSH=true
+        ;;
+    deploy)
+        FLOW_STAGE_DEPLOY=true
+        ;;
+    clean)
+        FLOW_STAGE_CLEAN=true
+        ;;
+    \?)
+        echo "Invalid stage: $FLOW_STAGE" >&2
+        exit 1
+        ;;
+esac
+
+
+if ! $FLOW_OFFLINE_GIT
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Initialization:"
+        echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
+        echo "  Would git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_MASTER_BRANCH"
+        echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
+        echo "  Would git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_MASTER_BRANCH"
+        echo ""
+    else
+        # Checkout the master branch, and ensure you are in sync with origin's master branch
+        git checkout $FLOW_GITFLOW_MASTER_BRANCH
+        git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_MASTER_BRANCH
+
+        # Checkout the develop branch, and ensure you are in sync with origin's develop branch
+        git checkout $FLOW_GITFLOW_DEVELOP_BRANCH
+        git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_DEVELOP_BRANCH
+    fi
+fi
+
+
+if $FLOW_STAGE_PREPARE
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: prepare"
+        if $FLOW_INTERACTIVE_VERSION
+        then
+            echo "  Would mvn clean release:clean release:prepare -DdryRun=true"
+        else
+            echo "  Would mvn -B clean release:clean release:prepare -DdryRun=true"
+            echo ""
+        fi
+    else
+        echo "Starting gfm prepare stage..."
+        # Perform a maven release:prepare as a dry run. This doesn't actually perform any SCM operations,
+        # but instead provides all the information we need later on in the script by creating a properties
+        # file and two versions of the modified pom.xml file. The generated files will not be checked into
+        # Git.
+        if $FLOW_INTERACTIVE_VERSION
+        then
+            mvn clean release:clean release:prepare -DdryRun=true
+        else
+            mvn -B clean release:clean release:prepare -DdryRun=true
+        fi
+    fi
+fi
+
+
+if $FLOW_STAGE_START
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: start"
+        echo "  Would ensure that release branch does not already exist."
+        echo "  Would git checkout -b \"$FLOW_GITFLOW_PREFIX_RELEASE<scmtag>\" $FLOW_GITFLOW_DEVELOP_BRANCH"
+        echo ""
+    else
+        echo "Starting gfm start stage..."
+        declareTagVersionVars
+        if git show-ref --verify --quiet -- "refs/heads/$FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG"
+        then
+          echo "error: release branch $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG already exists. Aborting" >&2
+          exit 1
+        fi
+
+        # Start a release in GitFlow using a release branch matching the SCM release tag name as determined
+        # by the prior Maven operation. This will checkout to the release branch; you will no longer be
+        # on the develop branch
+        git checkout -b "$FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG" $FLOW_GITFLOW_DEVELOP_BRANCH
+    fi
+fi
+
+
+if $FLOW_STAGE_APPLY
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: apply"
+        echo "  Would cp pom.xml.tag pom.xml"
+        echo "  Would git add pom.xml"
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            echo "  Would git commit"
+        else
+            echo "  Would git commit -m \"Releasing <scmtag>\""
+        fi
+        echo ""
+    else
+        echo "Starting gfm apply stage..."
+        # Overwrite the pom.xml file using the "tag" version of the pom.xml file that Maven created. This pom.xml
+        # represents the state of the pom.xml for the released tag.
+        cp pom.xml.tag pom.xml
+
+        # Add the new version of the pom.xml file to Git and commit it to the release branch.
+        git add pom.xml
+
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            git commit
+        else
+            git commit -m "Releasing $FLOW_SCM_TAG"
+        fi
+    fi
+fi
+
+
+if $FLOW_STAGE_FINISH
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: finish"
+
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
+            echo "  Would git merge --no-ff $FLOW_GITFLOW_PREFIX_RELEASE<scmtag>"
+            echo "  Would git tag -a <scmtag>"
+
+            echo "  Would git checkout $FLOW_GITFLOW_DEVELOP_BRANCH"
+            echo "  Would git merge --no-ff $FLOW_GITFLOW_PREFIX_RELEASE<scmtag>"
+        else
+            echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
+            echo "  Would git merge --no-ff -m \"Merging $FLOW_GITFLOW_PREFIX_RELEASE<scmtag> into $FLOW_GITFLOW_MASTER_BRANCH\" $FLOW_GITFLOW_PREFIX_RELEASE<scmtag>"
+            echo "  Would git tag -a -m \"<scmtag>\" <scmtag>"
+
+            echo "  Would git checkout $FLOW_GITFLOW_DEVELOP_BRANCH"
+            echo "  Would git merge --no-ff -m \"Merging $FLOW_GITFLOW_PREFIX_RELEASE<scmtag> into $FLOW_GITFLOW_DEVELOP_BRANCH\" $FLOW_GITFLOW_PREFIX_RELEASE<scmtag>"
+        fi
+
+        echo "  Would cp pom.xml.next pom.xml"
+        echo "  Would git add pom.xml"
+
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            echo "  Would git commit"
+        else
+            echo "  Would git commit -m \"Preparing pom.xml for version <nextversion>\""
+        fi
+        echo ""
+    else
+        echo "Starting gfm finish stage..."
+        # Finish the release in GitFlow. This will merge the release branch back to both the develop and master
+        # branches, tag the release branch using the SCM release tag, and delete the release branch. After
+        # this operation completes, you will be checked out on the develop branch.
+
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            git checkout $FLOW_GITFLOW_MASTER_BRANCH
+            git merge --no-ff $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG
+            git tag -a $FLOW_SCM_TAG
+
+            git checkout $FLOW_GITFLOW_DEVELOP_BRANCH
+            git merge --no-ff $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG
+        else
+            git checkout $FLOW_GITFLOW_MASTER_BRANCH
+            git merge --no-ff -m "Merging $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG into $FLOW_GITFLOW_MASTER_BRANCH" $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG
+            git tag -a -m "$FLOW_SCM_TAG" $FLOW_SCM_TAG
+
+            git checkout $FLOW_GITFLOW_DEVELOP_BRANCH
+            git merge --no-ff -m "Merging $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG into $FLOW_GITFLOW_DEVELOP_BRANCH" $FLOW_GITFLOW_PREFIX_RELEASE$FLOW_SCM_TAG
+        fi
+
+        #git flow release finish -m $FLOW_SCM_TAG $FLOW_SCM_TAG
+
+        # Overwrite the pom.xml file using the "next" version of the pom.xml file that Maven created. This pom.xml
+        # represents the state of the pom.xml for the next developmental iteration.
+        cp pom.xml.next pom.xml
+
+        # Add the new version of the pom.xml file to Git and commit it to the develop branch.
+        # FIXME This should be done at phase start
+        git add pom.xml
+
+        if $FLOW_INTERACTIVE_COMMIT
+        then
+            git commit
+        else
+            git commit -m "Preparing pom.xml for version $FLOW_PROJECT_DEV"
+        fi
+    fi
+fi
+
+
+if $FLOW_STAGE_PUSH
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: push"
+        if $FLOW_OFFLINE_GIT
+        then
+            echo ""
+        else
+            echo "  Would git push origin $FLOW_GITFLOW_DEVELOP_BRANCH"
+            echo "  Would git push origin <scmtag>"
+            echo "  Would git push origin $FLOW_GITFLOW_MASTER_BRANCH"
+            echo ""
+        fi
+    else
+        echo "Starting gfm push stage..."
+        if $FLOW_OFFLINE_GIT
+        then
+            echo "warning: working in git offline mode. Push stage skipped."
+        else
+            # All of the SCM operations so far have been performed locally. Push your changes to the develop, and master
+            # branches, as well as the new release tag back to the origin Git repository.
+            git push origin $FLOW_GITFLOW_DEVELOP_BRANCH
+            git push origin $FLOW_SCM_TAG
+            git push origin $FLOW_GITFLOW_MASTER_BRANCH
+        fi
+    fi
+fi
+
+
+if $FLOW_STAGE_DEPLOY
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: deploy"
+        if ! $FLOW_OFFLINE_MVN
+        then
+            echo "  Would git checkout <scmtag>"
+            echo "  Would mvn clean source:jar javadoc:jar deploy"
+            echo "  Would git checkout $FLOW_GITFLOW_DEVELOP_BRANCH"
+        else
+            echo "  Would git checkout $FLOW_GITFLOW_DEVELOP_BRANCH"
+        fi
+        echo ""
+    else
+        echo "Starting gfm deploy stage..."
+        if ! $FLOW_OFFLINE_MVN
+        then
+            # Now all of the SCM operations have completed. Checkout the release tag and perform a Maven deploy to
+            # deploy the build artifact to your Maven repository.
+            git checkout $FLOW_SCM_TAG
+            mvn clean source:jar javadoc:jar deploy
+        else
+            echo "warning: working in Maven offline mode. Deploy stage skipped."
+        fi
+
+        # Checkout the develop branch again
+        git checkout $FLOW_GITFLOW_DEVELOP_BRANCH
+    fi
+fi
+
+
+if $FLOW_STAGE_CLEAN
+then
+    if $FLOW_DRYRUN
+    then
+        echo "Stage: clean"
+        echo "  Would rm pom.xml.next"
+        echo "  Would rm pom.xml.releaseBackup"
+        echo "  Would rm pom.xml.tag"
+        echo "  Would rm release.properties"
+        echo ""
+    else
+        echo "Starting gfm clean stage..."
+        # Remove the files that maven release:prepare created
+        rm pom.xml.next
+        rm pom.xml.releaseBackup
+        rm pom.xml.tag
+        rm release.properties
+    fi
+fi
