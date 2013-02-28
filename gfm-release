@@ -4,6 +4,7 @@ set -e
 
 # Check for prerequisites
 command -v git >/dev/null 2>&1 || { echo "error: git is not installed. Aborting." >&2; exit 1; }
+command -v git-flow >/dev/null 2>&1 || { echo "error: git-flow is not installed. Aborting." >&2; exit 1; }
 command -v mvn >/dev/null 2>&1 || { echo "error: Apache Maven is not installed. Aborting." >&2; exit 1; }
 
 usage() {
@@ -52,6 +53,7 @@ declareTagVersionVars() {
     fi
 }
 
+
 FLOW_DRYRUN=false
 FLOW_INTERACTIVE_VERSION=false
 FLOW_INTERACTIVE_COMMIT=false
@@ -65,9 +67,20 @@ FLOW_STAGE_PUSH=false
 FLOW_STAGE_DEPLOY=false
 FLOW_STAGE_CLEAN=false
 FLOW_ORIGIN_REMOTE=origin
+
+set +e
 FLOW_GITFLOW_MASTER_BRANCH=`git config --get gitflow.branch.master`
 FLOW_GITFLOW_DEVELOP_BRANCH=`git config --get gitflow.branch.develop`
 FLOW_GITFLOW_PREFIX_RELEASE=`git config --get gitflow.prefix.release`
+set -e
+
+
+# Ensure that the current git repo has been initialized with git-flow
+if [ -z "$FLOW_GITFLOW_MASTER_BRANCH" ]
+then
+    echo "error: git repository has not been initialized to use git-flow. Please run git flow init." >&2
+    exit 1
+fi
 
 # Process options
 while getopts dhimorg: opt; do
@@ -160,8 +173,8 @@ then
         echo "Initialization:"
         echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
         echo "  Would git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_MASTER_BRANCH"
-        echo "  Would git checkout $FLOW_GITFLOW_MASTER_BRANCH"
-        echo "  Would git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_MASTER_BRANCH"
+        echo "  Would git checkout $FLOW_GITFLOW_DEVELOP_BRANCH"
+        echo "  Would git pull $FLOW_ORIGIN_REMOTE $FLOW_GITFLOW_DEVELOP_BRANCH"
         echo ""
     else
         # Checkout the master branch, and ensure you are in sync with origin's master branch
