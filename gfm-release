@@ -17,7 +17,7 @@ command -v mvn >/dev/null 2>&1 || { echo "error: Apache Maven is not installed. 
 
 usage() {
     echo "usage: gfm-release [-hdimor] [-g=origin] <phase>"
-    echo "Git-Flow Maven Release version 0.2"
+    echo "Git-Flow Maven Release version 0.3"
     echo ""
     echo "Options"
     echo "   -h        Display this help message"
@@ -53,7 +53,7 @@ declareTagVersionVars() {
         # Parse the properties file to obtain the Maven snapshot version number that will be used for
         # development after this release successfully completes and the name of the SCM release tag that
         # will ultimately be used for this release.
-        FLOW_PROJECT_DEV=$(cat release.properties | grep project.dev= | cut -d= -f2)
+        FLOW_PROJECT_DEV=$(cat release.properties | grep project.dev | cut -d= -f2)
         FLOW_SCM_TAG=$(cat release.properties | grep scm.tag= | cut -d= -f2)
     else
         echo "error: expected Maven release.properties does not exist. Run mvn release:prepare -DdryRun=true" >&2
