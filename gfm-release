@@ -17,7 +17,7 @@ command -v mvn >/dev/null 2>&1 || { echo "error: Apache Maven is not installed. 
 
 usage() {
     echo "usage: gfm-release [-hdimor] [-g=origin] <phase>"
-    echo "Git-Flow Maven Release version 0.1"
+    echo "Git-Flow Maven Release version 0.2"
     echo ""
     echo "Options"
     echo "   -h        Display this help message"
