@@ -1,4 +1,12 @@
 #!/bin/bash
+# Maven pom.xml file should include the following scm element:
+# <scm>
+#   <connection>scm:git:file://..</connection>
+#   <developerConnection>scm:git:file://..</developerConnection>
+#   <url>scm:git:file://..</url>
+#   <tag>HEAD</tag>
+# </scm>
+
 # Ensure this script fails on error.
 set -e
 
@@ -8,34 +16,35 @@ command -v git-flow >/dev/null 2>&1 || { echo "error: git-flow is not installed.
 command -v mvn >/dev/null 2>&1 || { echo "error: Apache Maven is not installed. Aborting." >&2; exit 1; }
 
 usage() {
-  echo "usage: gfm-release [-hdimor] [-g=origin] <phase>"
-       echo ""
-       echo "Options"
-       echo "   -h        Display this help message"
-       echo "   -d        Dry run only"
-       echo "   -i        Interactive selection of Maven versions"
-       echo "   -m        Interactive commit messages on new git commits and tags"
-       echo "   -o        Offline git. Do not pull or push from origin git repository."
-       echo "   -r        Offline Maven. Do not deploy to Maven repository."
-       echo "   -g=origin Remote git repository to push to (defaults to origin)"
-       echo ""
-       echo "Phases:"
-       echo "   all       Perform all of the steps for a release: prepare, start, commit, apply, finish, push, deploy, clean"
-       echo "   prepare   Perform a Maven release:prepare. This builds the project and executes unit tests."
-       echo "   start     If release branch does not exist, this phase starts the git-flow release. This phase depends "
-       echo "               on the prepare phase completing successfully."
-       echo "   apply     Commits the "tag" version pom.xml to the release branch still exists"
-       echo "   finish    Finishes the git-flow release if the release branch still exists. This creates an appropriate"
-       echo "               tag, merges the release branch to the develop and master branches, and finally deletes the"
-       echo "               release branch. It also and commits the "next" version pom.xml to the develop branch to"
-       echo "               prepare for the next step in iterative development. This phase depends on the apply phase"
-       echo "               completing successfully."
-       echo "   push      Pushes the release tag and the master and develop branches back to origin. This phase"
-       echo "               depends on the finish phase completing successfully."
-       echo "   deploy    Checks out the release tag and then performs a Maven source:jar javadoc:jar and deploy."
-       echo "               After deploying completes, checks out the develop branch. This phase depends on the"
-       echo "               push phase completing successfully."
-       echo "   clean     Cleans up the files that the Maven release:prepare created."
+    echo "usage: gfm-release [-hdimor] [-g=origin] <phase>"
+    echo "Git-Flow Maven Release version 0.1"
+    echo ""
+    echo "Options"
+    echo "   -h        Display this help message"
+    echo "   -d        Dry run only"
+    echo "   -i        Interactive selection of Maven versions"
+    echo "   -m        Interactive commit messages on new git commits and tags"
+    echo "   -o        Offline git. Do not pull or push from origin git repository."
+    echo "   -r        Offline Maven. Do not deploy to Maven repository."
+    echo "   -g=origin Remote git repository to push to (defaults to origin)"
+    echo ""
+    echo "Phases:"
+    echo "   all       Perform all of the steps for a release: prepare, start, commit, apply, finish, push, deploy, clean"
+    echo "   prepare   Perform a Maven release:prepare. This builds the project and executes unit tests."
+    echo "   start     If release branch does not exist, this phase starts the git-flow release. This phase depends "
+    echo "               on the prepare phase completing successfully."
+    echo "   apply     Commits the "tag" version pom.xml to the release branch still exists"
+    echo "   finish    Finishes the git-flow release if the release branch still exists. This creates an appropriate"
+    echo "               tag, merges the release branch to the develop and master branches, and finally deletes the"
+    echo "               release branch. It also and commits the "next" version pom.xml to the develop branch to"
+    echo "               prepare for the next step in iterative development. This phase depends on the apply phase"
+    echo "               completing successfully."
+    echo "   push      Pushes the release tag and the master and develop branches back to origin. This phase"
+    echo "               depends on the finish phase completing successfully."
+    echo "   deploy    Checks out the release tag and then performs a Maven source:jar javadoc:jar and deploy."
+    echo "               After deploying completes, checks out the develop branch. This phase depends on the"
+    echo "               push phase completing successfully."
+    echo "   clean     Cleans up the files that the Maven release:prepare created."
 }
 
 declareTagVersionVars() {
@@ -195,9 +204,9 @@ then
         echo "Stage: prepare"
         if $FLOW_INTERACTIVE_VERSION
         then
-            echo "  Would mvn clean release:clean release:prepare -DdryRun=true"
+            echo "  Would mvn clean release:clean release:prepare -DdryRun=true -DpushChanges=false -DlocalCheckout=true"
         else
-            echo "  Would mvn -B clean release:clean release:prepare -DdryRun=true"
+            echo "  Would mvn -B clean release:clean release:prepare -DdryRun=true -DpushChanges=false -DlocalCheckout=true"
             echo ""
         fi
     else
@@ -208,9 +217,9 @@ then
         # Git.
         if $FLOW_INTERACTIVE_VERSION
         then
-            mvn clean release:clean release:prepare -DdryRun=true
+            mvn clean release:clean release:prepare -DdryRun=true -DpushChanges=false -DlocalCheckout=true
         else
-            mvn -B clean release:clean release:prepare -DdryRun=true
+            mvn -B clean release:clean release:prepare -DdryRun=true -DpushChanges=false -DlocalCheckout=true
         fi
     fi
 fi
